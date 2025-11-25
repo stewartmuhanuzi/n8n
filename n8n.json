@@ -1,0 +1,378 @@
+{
+  "name": "Shopify Order Sync - Fixed",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "cron-trigger",
+      "name": "Cron Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-business-hours",
+              "leftValue": "={{ $now.hour() }}",
+              "rightValue": 8,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            },
+            {
+              "id": "check-business-hours-end",
+              "leftValue": "={{ $now.hour() }}",
+              "rightValue": 18,
+              "operator": {
+                "type": "number",
+                "operation": "lt"
+              }
+            },
+            {
+              "id": "check-weekday",
+              "leftValue": "={{ $now.weekday() }}",
+              "rightValue": 6,
+              "operator": {
+                "type": "number",
+                "operation": "lt"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "business-hours",
+      "name": "Business Hours Check",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://' + $vars.SHOPIFY_ADMIN + '.myshopify.com/admin/api/2023-10/orders.json' }}",
+        "method": "GET",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Shopify-Access-Token",
+              "value": "={{ $vars.SHOPIFY_ACCESS_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "qs": {
+            "limit": 250,
+            "status": "any",
+            "updated_at_min": "={{ $now.subtract(1, 'hours').toISOString() }}"
+          }
+        }
+      },
+      "id": "shopify-orders",
+      "name": "Get Shopify Orders",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Enhanced data processing with validation\nfunction processOrder(order) {\n  try {\n    return {\n      shopify_order_id: order.id,\n      order_number: order.order_number?.toString() || '',\n      order_name: order.name || '',\n      customer_email: order.email || '',\n      customer_first_name: order.customer?.first_name || '',\n      customer_last_name: order.customer?.last_name || '',\n      total_price: parseFloat(order.total_price) || 0,\n      subtotal_price: parseFloat(order.subtotal_price) || 0,\n      total_tax: parseFloat(order.total_tax) || 0,\n      currency: order.currency || 'USD',\n      financial_status: order.financial_status || '',\n      fulfillment_status: order.fulfillment_status || '',\n      created_at: order.created_at,\n      updated_at: order.updated_at,\n      processed_at: order.processed_at,\n      fulfilled_at: order.fulfilled_at,\n      cancelled_at: order.cancelled_at,\n      shipping_address: order.shipping_address || {},\n      tags: order.tags ? order.tags.split(',').map(t => t.trim()).filter(t => t) : [],\n      note: order.note || '',\n      raw_shopify_data: order\n    };\n  } catch (error) {\n    console.error('Error processing order:', error);\n    return null;\n  }\n}\n\nfunction processLineItem(orderId, line) {\n  try {\n    return {\n      shopify_order_id: orderId,\n      shopify_line_item_id: line.id,\n      product_id: line.product_id,\n      variant_id: line.variant_id,\n      title: line.title || line.name || '',\n      variant_title: line.variant_title || '',\n      sku: line.sku || '',\n      quantity: parseInt(line.quantity) || 0,\n      price: parseFloat(line.price) || 0,\n      fulfillment_status: line.fulfillment_status || '',\n      fulfillable_quantity: parseInt(line.fulfillable_quantity) || 0,\n      raw_line_item_data: line\n    };\n  } catch (error) {\n    console.error('Error processing line item:', error);\n    return null;\n  }\n}\n\nconst orders = [];\nconst orderLines = [];\nconst errors = [];\n\n// Get all input items\nconst items = $input.all();\n\nfor (const item of items) {\n  const responseData = item.json;\n  // Handle Shopify API response format: {\"orders\": [...]}\n  const ordersList = responseData.orders || [responseData];\n  \n  console.log(`Processing ${ordersList.length} orders from response`);\n\n  for (const order of ordersList) {\n    const processedOrder = processOrder(order);\n    if (processedOrder) {\n      orders.push(processedOrder);\n      \n      if (order.line_items && Array.isArray(order.line_items)) {\n        order.line_items.forEach(line => {\n          const processedLine = processLineItem(order.id, line);\n          if (processedLine) {\n            orderLines.push(processedLine);\n          } else {\n            errors.push(`Failed to process line item ${line.id} for order ${order.id}`);\n          }\n        });\n      }\n    } else {\n      errors.push(`Failed to process order ${order.id}`);\n    }\n  }\n}\n\n// Add detailed logging\nconsole.log('=== ORDER PROCESSING LOG ===');\nconsole.log('Successfully processed orders:', orders.length);\nconsole.log('Total order lines:', orderLines.length);\nconsole.log('Processing errors:', errors.length);\nif (orders.length > 0) {\n  console.log('Sample order:', {\n    id: orders[0].shopify_order_id,\n    number: orders[0].order_number,\n    total: orders[0].total_price\n  });\n}\nif (errors.length > 0) {\n  console.log('Errors:', errors);\n}\nconsole.log('========================');\n\nconst result = {\n  orders,\n  orderLines,\n  orderCount: orders.length,\n  lineItemCount: orderLines.length,\n  errorCount: errors.length,\n  errors: errors\n};\n\nreturn [{ json: result }];"
+      },
+      "id": "process-data",
+      "name": "Process & Validate Data",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $vars.SUPABASE_HOST + '/rest/v1/orders?on_conflict=shopify_order_id' }}",
+        "method": "POST",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $vars.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $vars.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates,return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.orders }}"
+      },
+      "id": "db-orders",
+      "name": "Upsert Orders",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1120, 200],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "url": "={{ $vars.SUPABASE_HOST + '/rest/v1/order_lines?on_conflict=shopify_line_item_id' }}",
+        "method": "POST",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $vars.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $vars.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates,return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.orderLines }}"
+      },
+      "id": "db-lines",
+      "name": "Upsert Order Lines",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1120, 400],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "mode": "passThrough",
+        "output": "input1"
+      },
+      "id": "merge-results",
+      "name": "Merge Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $vars.SUPABASE_HOST + '/rest/v1/sync_log' }}",
+        "method": "POST",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $vars.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $vars.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "=[{\n  \"sync_type\": \"orders\",\n  \"orders_fetched\": {{ $('Process & Validate Data').item.json.orderCount }},\n  \"line_items_fetched\": {{ $('Process & Validate Data').item.json.lineItemCount }},\n  \"errors_count\": {{ $('Process & Validate Data').item.json.errorCount }},\n  \"status\": \"{{ $('Process & Validate Data').item.json.errorCount > 0 ? 'partial' : 'success' }}\",\n  \"error_message\": \"{{ $('Process & Validate Data').item.json.errors.join(', ') }}\",\n  \"synced_at\": \"{{ $now.toISOString() }}\"\n}]"
+      },
+      "id": "db-log",
+      "name": "Log to Database",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $vars.SLACK_WEBHOOK_URL }}",
+        "method": "POST",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"text\": \"✅ Shopify sync completed\",\n  \"blocks\": [\n    {\n      \"type\": \"section\",\n      \"text\": {\n        \"type\": \"mrkdwn\",\n        \"text\": \"*Shopify Order Sync Complete*\\n• Orders: {{ $('Process & Validate Data').item.json.orderCount }}\\n• Line Items: {{ $('Process & Validate Data').item.json.lineItemCount }}{{ $('Process & Validate Data').item.json.errorCount > 0 ? '\\n• ⚠️ Errors: ' + $('Process & Validate Data').item.json.errorCount : '' }}\"\n      }\n    }\n  ]\n}"
+      },
+      "id": "slack-notify",
+      "name": "Slack Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1780, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "manualTrigger": true
+      },
+      "id": "manual-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 500]
+    }
+  ],
+  "connections": {
+    "Cron Trigger": {
+      "main": [
+        [
+          {
+            "node": "Business Hours Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Shopify Orders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Business Hours Check": {
+      "main": [
+        [
+          {
+            "node": "Get Shopify Orders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Shopify Orders": {
+      "main": [
+        [
+          {
+            "node": "Process & Validate Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process & Validate Data": {
+      "main": [
+        [
+          {
+            "node": "Upsert Orders",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Upsert Order Lines",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Orders": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Order Lines": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Results": {
+      "main": [
+        [
+          {
+            "node": "Log to Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log to Database": {
+      "main": [
+        [
+          {
+            "node": "Slack Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    "shopify",
+    "supabase",
+    "automation",
+    "monitoring"
+  ]
+}
