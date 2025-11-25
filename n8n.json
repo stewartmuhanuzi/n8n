@@ -1,5 +1,5 @@
 {
-  "name": "Shopify Order Sync - Fixed",
+  "name": "Shopify Order & Product Sync",
   "nodes": [
     {
       "parameters": {
@@ -93,7 +93,37 @@
       "name": "Get Shopify Orders",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
-      "position": [680, 300]
+      "position": [680, 260]
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://' + $vars.SHOPIFY_ADMIN + '.myshopify.com/admin/api/2023-10/products.json' }}",
+        "method": "GET",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Shopify-Access-Token",
+              "value": "={{ $vars.SHOPIFY_ACCESS_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "qs": {
+            "limit": 250,
+            "updated_at_min": "={{ $now.subtract(1, 'hours').toISOString() }}"
+          }
+        }
+      },
+      "id": "shopify-products",
+      "name": "Get Shopify Products",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [680, 380]
     },
     {
       "parameters": {
@@ -103,7 +133,17 @@
       "name": "Process & Validate Data",
       "type": "n8n-nodes-base.function",
       "typeVersion": 1,
-      "position": [900, 300]
+      "position": [900, 260]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Product + variant processing\nfunction processProduct(product) {\n  try {\n    return {\n      shopify_product_id: product.id,\n      title: product.title || '',\n      handle: product.handle || '',\n      body_html: product.body_html || '',\n      vendor: product.vendor || '',\n      product_type: product.product_type || '',\n      status: product.status || '',\n      tags: product.tags || '',\n      created_at: product.created_at,\n      updated_at: product.updated_at,\n      published_at: product.published_at\n    };\n  } catch (error) {\n    console.error('Error processing product:', error);\n    return null;\n  }\n}\n\nfunction processVariant(productId, variant) {\n  try {\n    return {\n      shopify_variant_id: variant.id,\n      shopify_product_id: productId,\n      title: variant.title || '',\n      sku: variant.sku || '',\n      price: parseFloat(variant.price) || 0,\n      position: variant.position || 0,\n      inventory_quantity: typeof variant.inventory_quantity === 'number' ? variant.inventory_quantity : null,\n      requires_shipping: typeof variant.requires_shipping === 'boolean' ? variant.requires_shipping : null,\n      taxable: typeof variant.taxable === 'boolean' ? variant.taxable : null,\n      created_at: variant.created_at,\n      updated_at: variant.updated_at\n    };\n  } catch (error) {\n    console.error('Error processing variant:', error);\n    return null;\n  }\n}\n\nconst products = [];\nconst variants = [];\nconst errors = [];\n\nconst items = $input.all();\n\nfor (const item of items) {\n  const responseData = item.json;\n  const productsList = responseData.products || [responseData];\n\n  console.log(`Processing ${productsList.length} products from response`);\n\n  for (const product of productsList) {\n    const processedProduct = processProduct(product);\n    if (processedProduct) {\n      products.push(processedProduct);\n\n      if (Array.isArray(product.variants)) {\n        product.variants.forEach(variant => {\n          const processedVariant = processVariant(product.id, variant);\n          if (processedVariant) {\n            variants.push(processedVariant);\n          } else {\n            errors.push(`Failed to process variant ${variant.id} for product ${product.id}`);\n          }\n        });\n      }\n    } else {\n      errors.push(`Failed to process product ${product.id}`);\n    }\n  }\n}\n\nconsole.log('=== PRODUCT PROCESSING LOG ===');\nconsole.log('Successfully processed products:', products.length);\nconsole.log('Total variants:', variants.length);\nconsole.log('Processing errors:', errors.length);\nif (products.length > 0) {\n  console.log('Sample product:', {\n    id: products[0].shopify_product_id,\n    title: products[0].title,\n    status: products[0].status\n  });\n}\nif (errors.length > 0) {\n  console.log('Errors:', errors);\n}\nconsole.log('========================');\n\nconst result = {\n  products,\n  variants,\n  productCount: products.length,\n  variantCount: variants.length,\n  errorCount: errors.length,\n  errors\n};\n\nreturn [{ json: result }];"
+      },
+      "id": "process-products",
+      "name": "Process & Validate Products",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [900, 380]
     },
     {
       "parameters": {
@@ -175,6 +215,78 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
       "position": [1120, 400],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "url": "={{ $vars.SUPABASE_HOST + '/rest/v1/products?on_conflict=shopify_product_id' }}",
+        "method": "POST",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $vars.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $vars.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates,return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.products }}"
+      },
+      "id": "db-products",
+      "name": "Upsert Products",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1120, 520],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "url": "={{ $vars.SUPABASE_HOST + '/rest/v1/product_variants?on_conflict=shopify_variant_id' }}",
+        "method": "POST",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $vars.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $vars.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates,return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.variants }}"
+      },
+      "id": "db-variants",
+      "name": "Upsert Variants",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1120, 640],
       "continueOnFail": true
     },
     {
@@ -271,6 +383,22 @@
         ]
       ]
     },
+    "Business Hours Check": {
+      "main": [
+        [
+          {
+            "node": "Get Shopify Orders",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Shopify Products",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Manual Trigger": {
       "main": [
         [
@@ -278,15 +406,9 @@
             "node": "Get Shopify Orders",
             "type": "main",
             "index": 0
-          }
-        ]
-      ]
-    },
-    "Business Hours Check": {
-      "main": [
-        [
+          },
           {
-            "node": "Get Shopify Orders",
+            "node": "Get Shopify Products",
             "type": "main",
             "index": 0
           }
@@ -304,6 +426,17 @@
         ]
       ]
     },
+    "Get Shopify Products": {
+      "main": [
+        [
+          {
+            "node": "Process & Validate Products",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Process & Validate Data": {
       "main": [
         [
@@ -314,6 +447,22 @@
           },
           {
             "node": "Upsert Order Lines",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process & Validate Products": {
+      "main": [
+        [
+          {
+            "node": "Upsert Products",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Upsert Variants",
             "type": "main",
             "index": 0
           }
