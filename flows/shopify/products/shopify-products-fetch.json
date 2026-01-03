@@ -1,0 +1,154 @@
+{
+  "name": "Shopify Products Fetch",
+  "description": "Fetches products from Shopify API and stores them in raw table format",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": "{{ $vars.SHOPIFY_FETCH_INTERVAL_MINUTES || 15 }}"
+            }
+          ]
+        }
+      },
+      "id": "cron-trigger",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "{{ 'https://' + $vars.SHOPIFY_ADMIN + '.myshopify.com/admin/api/' + ($vars.SHOPIFY_API_VERSION || '2023-10') + '/products.json' }}",
+        "method": "GET",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Shopify-Access-Token",
+              "value": "{{ $vars.SHOPIFY_ACCESS_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "qs": {
+            "limit": "{{ $vars.SHOPIFY_FETCH_LIMIT || 250 }}",
+            "updated_at_min": "{{ $now.subtract(parseInt($vars.SHOPIFY_FETCH_WINDOW_HOURS || 1), 'hours').toISOString() }}"
+          },
+          "retry": {
+            "enabled": true,
+            "maxAttempts": 3,
+            "waitBetween": 1000
+          }
+        }
+      },
+      "id": "fetch-products",
+      "name": "Fetch Shopify Products",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [460, 300],
+      "continueOnFail": false
+    },
+    {
+      "parameters": {
+        "url": "{{ $vars.SUPABASE_HOST + '/rest/v1/raw_shopify_products' }}",
+        "method": "POST",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "{{ $vars.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "{{ 'Bearer ' + $vars.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates,return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.products || [$json] }}",
+        "options": {
+          "retry": {
+            "enabled": true,
+            "maxAttempts": 3,
+            "waitBetween": 2000
+          }
+        }
+      },
+      "id": "store-raw-products",
+      "name": "Store Raw Products",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [680, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "functionCode": "// Log fetch results and prepare response\nconst responseData = $input.first().json;\nconst products = $json.products || [$json];\n\nconst result = {\n  fetch_type: 'products',\n  source: 'shopify_api',\n  records_processed: products.length,\n  fetch_timestamp: $now.toISOString(),\n  status: 'success',\n  raw_data_endpoint: 'raw_shopify_products',\n  next_step: 'products_transform',\n  metadata: {\n    api_version: $vars.SHOPIFY_API_VERSION || '2023-10',\n    fetch_window_hours: $vars.SHOPIFY_FETCH_WINDOW_HOURS || 1,\n    limit: $vars.SHOPIFY_FETCH_LIMIT || 250\n  }\n};\n\n// Add logging for monitoring\nconsole.log('=== SHOPIFY PRODUCTS FETCH LOG ===');\nconsole.log('Timestamp:', $now.toISOString());\nconsole.log('Products fetched:', products.length);\nconsole.log('Fetch window:', ($vars.SHOPIFY_FETCH_WINDOW_HOURS || 1) + ' hours');\nconsole.log('API version:', $vars.SHOPIFY_API_VERSION || '2023-10');\nconsole.log('====================================');\n\nreturn [{ json: result }];"
+      },
+      "id": "log-results",
+      "name": "Log Fetch Results",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fetch Shopify Products",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Shopify Products": {
+      "main": [
+        [
+          {
+            "node": "Store Raw Products",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Raw Products": {
+      "main": [
+        [
+          {
+            "node": "Log Fetch Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "activeCount": 0
+}

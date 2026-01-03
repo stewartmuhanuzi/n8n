@@ -1,0 +1,164 @@
+{
+  "$schema": "./merchant-config-schema.json",
+  "merchant": {
+    "id": "{{MERCHANT_ID}}",
+    "displayName": "{{MERCHANT_DISPLAY_NAME}}",
+    "shopify": {
+      "adminHandle": "{{SHOPIFY_ADMIN}}",
+      "apiVersion": "2024-01",
+      "timezone": "America/New_York",
+      "currency": "USD",
+      "marketRegions": ["US", "CA", "MX"]
+    },
+    "database": {
+      "schema": "merchant_{{MERCHANT_ID}}",
+      "tablePrefix": "shopify_"
+    },
+    "business": {
+      "hours": {
+        "start": "08:00",
+        "end": "18:00",
+        "timezone": "{{TIMEZONE}}",
+        "weekends": false,
+        "holidays": ["2024-12-25", "2024-01-01"]
+      },
+      "locale": "en-US",
+      "dateFormat": "MM/DD/YYYY",
+      "taxIncluded": true
+    },
+    "features": {
+      "orders": {
+        "enabled": true,
+        "syncFrequency": "15m",
+        "status": ["any", "open", "closed", "cancelled"],
+        "financialStatus": ["any", "pending", "authorized", "partially_paid", "paid", "refunded", "voided"],
+        "fulfillmentStatus": ["any", "fulfilled", "partial", "restocked", "unfulfilled"]
+      },
+      "products": {
+        "enabled": true,
+        "syncFrequency": "30m",
+        "includeVariants": true,
+        "includeImages": true,
+        "includeMetafields": true,
+        "trackInventory": true
+      },
+      "inventory": {
+        "enabled": true,
+        "syncFrequency": "10m",
+        "trackLocations": true,
+        "lowStockThreshold": 10,
+        "reorderPoint": 20
+      },
+      "customers": {
+        "enabled": false,
+        "syncFrequency": "60m",
+        "includeOrders": true,
+        "gdprCompliance": false
+      },
+      "webhooks": {
+        "enabled": true,
+        "topics": [
+          "orders/create",
+          "orders/updated",
+          "orders/cancelled",
+          "orders/fulfilled",
+          "products/create",
+          "products/update",
+          "inventory_levels/update"
+        ],
+        "secret": "{{WEBHOOK_SECRET}}"
+      }
+    },
+    "dataMapping": {
+      "orders": {
+        "customFields": {
+          "internalOrderId": "order_number",
+          "source": "source_name",
+          "channel": "checkout_id",
+          "customerType": "customer.tags"
+        },
+        "transformations": {
+          "currencyConversion": {
+            "enabled": false,
+            "targetCurrency": "USD"
+          },
+          "taxCalculation": {
+            "included": true,
+            "extractSeparate": false
+          }
+        }
+      },
+      "products": {
+        "customFields": {
+          "sku": "sku",
+          "barcode": "barcode",
+          "weight": "grams",
+          "category": "product_type"
+        },
+        "transformations": {
+          "normalizeImages": true,
+          "extractColors": true,
+          "calculateMargins": false
+        }
+      }
+    },
+    "integrations": {
+      "slack": {
+        "enabled": "{{SLACK_WEBHOOK_URL}}",
+        "channel": "{{SLACK_CHANNEL}}",
+        "notifications": {
+          "errors": true,
+          "orderAlerts": false,
+          "lowStock": true,
+          "dailySummary": false
+        }
+      },
+      "email": {
+        "enabled": "{{ERROR_NOTIFICATION_EMAIL}}",
+        "templates": {
+          "errorReport": "error-notification",
+          "dailySummary": "daily-summary"
+        }
+      },
+      "analytics": {
+        "enabled": false,
+        "providers": ["google-analytics", "mixpanel"],
+        "trackingId": ""
+      }
+    },
+    "compliance": {
+      "gdpr": {
+        "enabled": false,
+        "anonymizeAfterDays": 365,
+        "rightToDeletion": true
+      },
+      "ccpa": {
+        "enabled": false,
+        "doNotSell": true
+      },
+      "sox": {
+        "enabled": false,
+        "auditLog": true,
+        "retentionDays": 2555
+      }
+    },
+    "backup": {
+      "enabled": false,
+      "frequency": "daily",
+      "retention": {
+        "days": 30,
+        "weekly": 12,
+        "monthly": 12,
+        "yearly": 7
+      },
+      "storage": {
+        "type": "s3",
+        "bucket": "{{ARCHIVAL_S3_BUCKET}}",
+        "region": "{{ARCHIVAL_AWS_REGION}}"
+      }
+    }
+  },
+  "version": "1.0.0",
+  "createdAt": "2024-01-01T00:00:00Z",
+  "updatedAt": "{{CURRENT_TIMESTAMP}}"
+}

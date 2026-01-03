@@ -1,0 +1,310 @@
+{
+  "name": "Products Transform",
+  "description": "Transforms raw Shopify products into normalized format for the products and product_variants tables",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": "{{ $vars.TRANSFORM_INTERVAL_MINUTES || 5 }}"
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "{{ $vars.SUPABASE_HOST + '/rest/v1/raw_shopify_products' }}",
+        "method": "GET",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "{{ $vars.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "{{ 'Bearer ' + $vars.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "qs": {
+            "select": "*",
+            "limit": "{{ $vars.TRANSFORM_BATCH_SIZE || 100 }}",
+            "order": "created_at.desc",
+            "processed": "eq.false"
+          }
+        }
+      },
+      "id": "fetch-raw-products",
+      "name": "Fetch Unprocessed Raw Products",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Enhanced product and variant processing with validation\nfunction processProduct(product) {\n  try {\n    // Validate required fields\n    if (!product.id) {\n      throw new Error('Missing required field: id');\n    }\n\n    return {\n      shopify_product_id: product.id,\n      title: product.title || '',\n      handle: product.handle || '',\n      body_html: product.body_html || '',\n      vendor: product.vendor || '',\n      product_type: product.product_type || '',\n      status: product.status || 'active',\n      tags: product.tags ? product.tags.split(',').map(t => t.trim()).filter(t => t) : [],\n      created_at: product.created_at,\n      updated_at: product.updated_at,\n      published_at: product.published_at,\n      template_suffix: product.template_suffix || '',\n      published_scope: product.published_scope || 'global',\n      options: product.options || [],\n      images: product.images || [],\n      image: product.image || null,\n      metafields: product.metafields || [],\n      admin_graphql_api_id: product.admin_graphql_api_id || '',\n      raw_shopify_data: product\n    };\n  } catch (error) {\n    console.error('Error processing product:', error.message, 'Product ID:', product.id);\n    return null;\n  }\n}\n\nfunction processVariant(productId, variant) {\n  try {\n    if (!variant.id) {\n      throw new Error('Missing required field: variant id');\n    }\n\n    return {\n      shopify_variant_id: variant.id,\n      shopify_product_id: productId,\n      title: variant.title || '',\n      sku: variant.sku || '',\n      barcode: variant.barcode || '',\n      price: parseFloat(variant.price) || 0,\n      compare_at_price: parseFloat(variant.compare_at_price) || null,\n      position: variant.position || 0,\n      inventory_quantity: typeof variant.inventory_quantity === 'number' ? variant.inventory_quantity : null,\n      inventory_policy: variant.inventory_policy || 'deny',\n      inventory_management: variant.inventory_management || null,\n      inventory_item_id: variant.inventory_item_id || null,\n      requires_shipping: typeof variant.requires_shipping === 'boolean' ? variant.requires_shipping : null,\n      taxable: typeof variant.taxable === 'boolean' ? variant.taxable : null,\n      fulfillment_service: variant.fulfillment_service || 'manual',\n      weight: parseFloat(variant.weight) || null,\n      weight_unit: variant.weight_unit || null,\n      grams: typeof variant.grams === 'number' ? variant.grams : null,\n      image_id: variant.image_id || null,\n      option1: variant.option1 || null,\n      option2: variant.option2 || null,\n      option3: variant.option3 || null,\n      created_at: variant.created_at,\n      updated_at: variant.updated_at,\n      admin_graphql_api_id: variant.admin_graphql_api_id || '',\n      raw_variant_data: variant\n    };\n  } catch (error) {\n    console.error('Error processing variant:', error.message, 'Variant ID:', variant.id);\n    return null;\n  }\n}\n\nconst products = [];\nconst variants = [];\nconst errors = [];\nconst processedIds = [];\n\nconst items = $input.all();\n\nconsole.log(`Starting transformation of ${items.length} raw product records`);\n\nfor (const item of items) {\n  const productData = item.json;\n  \n  try {\n    const processedProduct = processProduct(productData);\n    if (processedProduct) {\n      products.push(processedProduct);\n      processedIds.push(productData.id);\n\n      if (Array.isArray(productData.variants)) {\n        productData.variants.forEach(variant => {\n          const processedVariant = processVariant(productData.id, variant);\n          if (processedVariant) {\n            variants.push(processedVariant);\n          } else {\n            errors.push(`Failed to process variant ${variant.id} for product ${productData.id}`);\n          }\n        });\n      }\n    } else {\n      errors.push(`Failed to process product ${productData.id}`);\n    }\n  } catch (error) {\n    errors.push(`Unexpected error processing product ${productData.id}: ${error.message}`);\n  }\n}\n// Add detailed logging\nconsole.log('=== PRODUCT TRANSFORMATION LOG ===');\nconsole.log('Input records:', items.length);\nconsole.log('Successfully processed products:', products.length);\nconsole.log('Total variants:', variants.length);\nconsole.log('Processing errors:', errors.length);\nif (products.length > 0) {\n  console.log('Sample product:', {\n    id: products[0].shopify_product_id,\n    title: products[0].title,\n    status: products[0].status\n  });\n}\nif (errors.length > 0) {\n  console.log('Errors:', errors.slice(0, 10)); // Show first 10 errors\n}\nconsole.log('=================================');\n\nconst result = {\n  transform_type: 'products',\n  source: 'raw_shopify_products',\n  input_records: items.length,\n  products_processed: products.length,\n  variants_processed: variants.length,\n  errors_count: errors.length,\n  errors: errors.slice(0, 50), // Limit error details\n  processed_ids: processedIds,\n  transform_timestamp: $now.toISOString(),\n  status: errors.length === 0 ? 'success' : 'partial'\n};\n\nreturn [\n  { json: { type: 'products', data: products } },\n  { json: { type: 'product_variants', data: variants } },\n  { json: { type: 'transform_summary', data: result } }\n];"
+      },
+      "id": "transform-data",
+      "name": "Transform & Validate Products",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "url": "{{ $vars.SUPABASE_HOST + '/rest/v1/products?on_conflict=shopify_product_id' }}",
+        "method": "POST",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "{{ $vars.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "{{ 'Bearer ' + $vars.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates,return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.data }}",
+        "options": {
+          "retry": {
+            "enabled": true,
+            "maxAttempts": 3,
+            "waitBetween": 2000
+          }
+        }
+      },
+      "id": "upsert-products",
+      "name": "Upsert Normalized Products",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [900, 200],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "url": "{{ $vars.SUPABASE_HOST + '/rest/v1/product_variants?on_conflict=shopify_variant_id' }}",
+        "method": "POST",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "{{ $vars.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "{{ 'Bearer ' + $vars.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates,return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.data }}",
+        "options": {
+          "retry": {
+            "enabled": true,
+            "maxAttempts": 3,
+            "waitBetween": 2000
+          }
+        }
+      },
+      "id": "upsert-variants",
+      "name": "Upsert Normalized Variants",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [900, 400],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "mode": "passThrough",
+        "output": "input1"
+      },
+      "id": "merge-results",
+      "name": "Merge Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "url": "{{ $vars.SUPABASE_HOST + '/rest/v1/raw_shopify_products' }}",
+        "method": "PATCH",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "{{ $vars.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "{{ 'Bearer ' + $vars.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"processed\": true,\n  \"processed_at\": \"{{ $now.toISOString() }}\"\n}",
+        "options": {
+          "qs": {
+            "id": "in.({{ $json.data.processed_ids.join(',') }})"
+          }
+        }
+      },
+      "id": "mark-processed",
+      "name": "Mark Raw Products as Processed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1340, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "functionCode": "// Final logging for monitoring\nconst summary = $input.first().json.data;\n\nconsole.log('=== PRODUCTS TRANSFORM COMPLETE ===');\nconsole.log('Transform timestamp:', $now.toISOString());\nconsole.log('Records processed:', summary.input_records);\nconsole.log('Products upserted:', summary.products_processed);\nconsole.log('Variants upserted:', summary.variants_processed);\nconsole.log('Errors:', summary.errors_count);\nconsole.log('Status:', summary.status);\nconsole.log('================================');\n\nreturn [{ json: summary }];"
+      },
+      "id": "final-log",
+      "name": "Final Logging",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1560, 300]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fetch Unprocessed Raw Products",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Unprocessed Raw Products": {
+      "main": [
+        [
+          {
+            "node": "Transform & Validate Products",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transform & Validate Products": {
+      "main": [
+        [
+          {
+            "node": "Upsert Normalized Products",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Upsert Normalized Variants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Normalized Products": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Normalized Variants": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Results": {
+      "main": [
+        [
+          {
+            "node": "Mark Raw Products as Processed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Raw Products as Processed": {
+      "main": [
+        [
+          {
+            "node": "Final Logging",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "activeCount": 0
+}

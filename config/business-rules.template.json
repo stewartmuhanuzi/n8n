@@ -1,0 +1,262 @@
+{
+  "$schema": "./business-rules-schema.json",
+  "rules": {
+    "orderProcessing": {
+      "priority": "high",
+      "conditions": {
+        "businessHours": {
+          "enabled": true,
+          "schedule": {
+            "monday": { "start": "08:00", "end": "18:00" },
+            "tuesday": { "start": "08:00", "end": "18:00" },
+            "wednesday": { "start": "08:00", "end": "18:00" },
+            "thursday": { "start": "08:00", "end": "18:00" },
+            "friday": { "start": "08:00", "end": "18:00" },
+            "saturday": { "start": "09:00", "end": "15:00" },
+            "sunday": { "start": "closed", "end": "closed" }
+          },
+          "timezone": "{{TIMEZONE}}",
+          "holidays": [
+            "2024-01-01", "2024-07-04", "2024-12-25",
+            "2025-01-01", "2025-07-04", "2025-12-25"
+          ]
+        },
+        "orderValue": {
+          "minimum": {
+            "enabled": false,
+            "amount": 10.00,
+            "currency": "USD"
+          },
+          "maximum": {
+            "enabled": true,
+            "amount": 10000.00,
+            "currency": "USD",
+            "action": "flag_for_review"
+          }
+        },
+        "customerBlacklist": {
+          "enabled": true,
+          "sources": ["email", "ip", "payment_method"],
+          "action": "hold_order"
+        }
+      },
+      "workflows": {
+        "automaticFulfillment": {
+          "enabled": false,
+          "conditions": {
+            "orderTotal": { "max": 500.00 },
+            "itemCount": { "max": 5 },
+            "productTypes": ["physical"],
+            "paymentStatus": "paid"
+          }
+        },
+        "orderVerification": {
+          "enabled": true,
+          "thresholds": {
+            "addressMismatch": "flag",
+            "highRiskCountry": "review",
+            "multipleFailedPayments": "block"
+          }
+        }
+      }
+    },
+    "inventoryManagement": {
+      "priority": "medium",
+      "reorderPoints": {
+        "enabled": true,
+        "defaultThreshold": 20,
+        "productSpecific": {
+          "highVolume": { "threshold": 100, "tags": ["bestseller"] },
+          "slowMoving": { "threshold": 5, "tags": ["clearance"] },
+          "seasonal": { "threshold": 50, "tags": ["seasonal"] }
+        }
+      },
+      "stockAlerts": {
+        "enabled": true,
+        "levels": {
+          "critical": { "percentage": 10, "action": "immediate_notification" },
+          "low": { "percentage": 25, "action": "daily_summary" },
+          "moderate": { "percentage": 50, "action": "weekly_report" }
+        }
+      },
+      "backorderHandling": {
+        "enabled": true,
+        "maxBackorderDays": 30,
+        "autoNotifyCustomers": true,
+        "cancelAfterDays": 60
+      }
+    },
+    "pricingRules": {
+      "priority": "high",
+      "dynamicPricing": {
+        "enabled": false,
+        "factors": {
+          "competitorPricing": { "weight": 0.3 },
+          "demand": { "weight": 0.4 },
+          "inventory": { "weight": 0.2 },
+          "seasonality": { "weight": 0.1 }
+        },
+        "rules": {
+          "minMargin": 20,
+          "maxAdjustment": 15,
+          "updateFrequency": "daily"
+        }
+      },
+      "discountRules": {
+        "bulk": {
+          "enabled": true,
+          "tiers": [
+            { "quantity": 5, "discount": 5 },
+            { "quantity": 10, "discount": 10 },
+            { "quantity": 25, "discount": 15 },
+            { "quantity": 50, "discount": 20 }
+          ]
+        },
+        "promotional": {
+          "enabled": true,
+          "stackable": false,
+          "maxDiscountPercent": 50
+        }
+      }
+    },
+    "customerManagement": {
+      "priority": "medium",
+      "segmentation": {
+        "enabled": true,
+        "criteria": {
+          "purchaseFrequency": ["new", "occasional", "regular", "vip"],
+          "orderValue": ["low", "medium", "high"],
+          "productPreferences": ["category"],
+          "location": ["country", "region"]
+        },
+        "autoUpdate": true
+      },
+      "loyaltyProgram": {
+        "enabled": false,
+        "pointsPerDollar": 1,
+        "redemptionRate": 100,
+        "tiers": [
+          { "name": "Bronze", "points": 0, "benefits": ["free_shipping_50"] },
+          { "name": "Silver", "points": 1000, "benefits": ["free_shipping", "early_access"] },
+          { "name": "Gold", "points": 5000, "benefits": ["free_shipping", "early_access", "exclusive_discounts"] },
+          { "name": "Platinum", "points": 10000, "benefits": ["free_shipping", "early_access", "exclusive_discounts", "personal_service"] }
+        ]
+      }
+    },
+    "shippingRules": {
+      "priority": "high",
+      "freeShipping": {
+        "enabled": true,
+        "threshold": 50.00,
+        "exclusions": ["oversized", "hazardous"],
+        "locations": ["US", "CA"]
+      },
+      "rateCalculation": {
+        "method": "weight_based",
+        "baseRate": 5.99,
+        "perPoundRate": 0.50,
+        "maxCharge": 25.00
+      },
+      "deliveryOptions": {
+        "standard": { "days": "3-5", "price": 5.99 },
+        "express": { "days": "1-2", "price": 12.99 },
+        "overnight": { "days": "1", "price": 24.99 },
+        "pickup": { "days": "same_day", "price": 0.00 }
+      }
+    },
+    "taxConfiguration": {
+      "priority": "critical",
+      " nexus": {
+        "states": ["CA", "NY", "TX"],
+        "countries": ["US", "CA"],
+        "economicNexus": {
+          "enabled": true,
+          "thresholds": {
+            "sales": 100000,
+            "transactions": 200
+          }
+        }
+      },
+      "taxRates": {
+        "calculationMethod": "automated",
+        "provider": "taxjar",
+        "taxExempt": {
+          "resale": true,
+          "nonprofit": true,
+          "government": true
+        }
+      }
+    },
+    "dataRetention": {
+      "priority": "low",
+      "policies": {
+        "orders": {
+          "activePeriod": 2555, // 7 years
+          "archival": true,
+          "anonymization": {
+            "enabled": false,
+            "afterDays": 365
+          }
+        },
+        "customers": {
+          "activePeriod": 2555,
+          "archival": true,
+          "anonymization": {
+            "enabled": true,
+            "afterDays": 365
+          }
+        },
+        "inventory": {
+          "activePeriod": 1825, // 5 years
+          "archival": false
+        }
+      }
+    },
+    "errorHandling": {
+      "retryPolicy": {
+        "maxAttempts": 3,
+        "backoffStrategy": "exponential",
+        "initialDelay": 1000,
+        "maxDelay": 30000
+      },
+      "alerting": {
+        "critical": ["payment_failures", "inventory_sync_errors", "api_limit_reached"],
+        "warning": ["shipping_delays", "low_stock", "customer_data_issues"],
+        "info": ["daily_sync_completion", "new_order_thresholds"]
+      },
+      "fallbackProcedures": {
+        "apiFailure": "queue_for_retry",
+        "databaseFailure": "write_to_file",
+        "notificationFailure": "email_backup"
+      }
+    },
+    "performanceOptimization": {
+      "batchProcessing": {
+        "enabled": true,
+        "size": 100,
+        "timeout": 300
+      },
+      "caching": {
+        "enabled": true,
+        "ttl": {
+          "products": 3600,
+          "customers": 1800,
+          "inventory": 300
+        }
+      },
+      "rateLimiting": {
+        "shopify": {
+          "requestsPerSecond": 2,
+          "burstCapacity": 40
+        },
+        "database": {
+          "connectionsPerSecond": 100,
+          "maxConnections": 20
+        }
+      }
+    }
+  },
+  "version": "1.0.0",
+  "lastReviewed": "2024-01-01T00:00:00Z",
+  "nextReview": "2024-04-01T00:00:00Z"
+}
