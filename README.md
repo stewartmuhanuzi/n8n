@@ -122,23 +122,60 @@ n8n-shopify-library/
 
 ### 5-Minute Setup
 
-**1. Database Setup**
+**1. Install Supabase CLI**
 ```bash
-# Clone this repository
-git clone <repository-url>
-cd n8n
-
-# Install Supabase CLI (if not installed)
+# Install Supabase CLI (macOS)
 brew install supabase/tap/supabase
 
-# Link to your Supabase project
-supabase link --project-ref YOUR_PROJECT_REF
-
-# Complete setup using Edge Function
-# (See scripts/complete-setup.md for detailed instructions)
+# Verify installation
+supabase --version
 ```
 
-**2. Environment Configuration**
+**2. Login to Supabase**
+```bash
+# Authenticate via browser
+supabase login
+
+# You'll be prompted to open a browser
+# Enter the verification code when shown
+# Example output: "Token created successfully. You are now logged in."
+```
+
+**3. Link to Your Supabase Project**
+```bash
+# Navigate to your project
+cd n8n
+
+# Link to your existing Supabase project
+supabase link
+
+# You'll see your project refs listed
+# Select the one you want to link (e.g., njthlnvceqlglfggppqw)
+# Example output: "Selected project: njthlnvceqlglfggppqw"
+```
+
+**4. Run Database Migrations**
+```bash
+# Push all migrations to your Supabase project
+supabase db push
+
+# You'll see a list of migrations to apply
+# Type 'Y' and press Enter to confirm
+```
+
+**What happens during `supabase db push`:**
+- Connects to your remote database
+- Shows all pending migrations (0000 through 0009)
+- Applies each migration in order
+- Creates all required tables and functions
+
+**5. Verify Setup**
+```bash
+# Check migration status in Supabase dashboard
+# Visit: https://supabase.com/dashboard/project/YOUR_REF/database/migrations
+```
+
+**6. Environment Configuration**
 ```bash
 # Copy environment template
 cp config/env.template .env
@@ -147,7 +184,7 @@ cp config/env.template .env
 # Required: MERCHANT_ID, SHOPIFY_ADMIN, SHOPIFY_ACCESS_TOKEN, SUPABASE_HOST, SUPABASE_SERVICE_ROLE_KEY
 ```
 
-**3. Import n8n Workflows**
+**7. Import n8n Workflows**
 ```bash
 # Import workflows in order to n8n:
 # 1. flows/shopify/shared/sync-orchestrator.json
@@ -157,7 +194,7 @@ cp config/env.template .env
 # 5. flows/shopify/products/products-transform.json
 ```
 
-**4. Test & Deploy**
+**8. Test & Deploy**
 ```bash
 # Use manual trigger in sync-orchestrator workflow
 # Verify data appears in database tables
@@ -314,10 +351,24 @@ function applyBusinessRules(orderData, merchantConfig) {
 ## 🆘 Support & Troubleshooting
 
 ### Common Issues
-- **Database Connection**: Check SUPABASE_HOST and credentials
-- **Shopify API**: Verify access token and permissions
-- **Rate Limits**: Adjust API_BATCH_SIZE and SYNC_INTERVAL_MINUTES
-- **Missing Tables**: Run database migrations or Edge Function setup
+
+**Supabase CLI Link Errors**
+```
+Error: "Your account does not have the necessary privileges"
+```
+**Solution**: Make sure you're logged in:
+```bash
+supabase login
+```
+Then try linking again:
+```bash
+supabase link
+```
+
+**Database Connection**: Check SUPABASE_HOST and credentials
+**Shopify API**: Verify access token and permissions
+**Rate Limits**: Adjust API_BATCH_SIZE and SYNC_INTERVAL_MINUTES
+**Missing Tables**: Run `supabase db push` to create tables
 
 ### Getting Help
 1. Check the **troubleshooting section** in the deployment guide
@@ -336,13 +387,16 @@ cd n8n
 # Install Supabase CLI
 brew install supabase/tap/supabase
 
-# Link to development project
-supabase link --project-ref DEV_PROJECT_REF
+# Login to Supabase
+supabase login
+
+# Link to your project (interactive - will show available projects)
+supabase link
 
 # Run migrations
 supabase db push
 
-# Start development
+# Start local development (optional)
 supabase start
 ```
 
